@@ -36,12 +36,17 @@ class StreamIntegration(Integration):
         self.stop_event = STOP_THREADS_EVENT
         self.log = log
 
+    def get_stream_from_db(self, db_record):
+        kwargs = {"type": db_record._type,
+                  "name": db_record.name,
+                  "predictor": db_record.predictor,
+                  "input_stream": db_record.stream_in,
+                  "output_stream": db_record.stream_out,
+                  "anomaly_stream": db_record.stream_anomaly}
+        return self.get_stream_from_kwargs(**kwargs)
+
     def exist_in_db(self):
         return self.name in Config()['integrations']
-
-    def stop_streams(self):
-        for stream in self.streams:
-            self.streams[stream].set()
 
     def delete_stream(self, predictor):
         """Deletes stream from database and stops it work by
@@ -60,6 +65,10 @@ class StreamIntegration(Integration):
             del self.streams[stream]
         session.query(Stream).filter_by(company_id=self.company_id, integration=self.name).delete()
         session.commit()
+
+    def stop_streams(self):
+        for stream in self.streams:
+            self.streams[stream].set()
 
     def stop_deleted_streams(self):
         existed_streams = session.query(Stream).filter_by(company_id=self.company_id, integration=self.name)

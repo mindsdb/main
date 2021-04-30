@@ -17,7 +17,7 @@ class SessionController():
     This class manages the server session
     '''
 
-    def __init__(self) -> object:
+    def __init__(self, company_id=None) -> object:
         """
         Initialize the session
         :param socket:
@@ -25,6 +25,7 @@ class SessionController():
 
         self.username = None
         self.auth = False
+        self.company_id = company_id
         self.logging = log
 
         self.integration = None

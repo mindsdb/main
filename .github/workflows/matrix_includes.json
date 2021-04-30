@@ -1,0 +1,65 @@
+[
+    {
+      "runs_on": "ubuntu-latest",
+      "python-version": 3.7,
+      "token": "install_ray",
+      "runOn": "always"
+    },
+    {
+      "runs_on": "ubuntu-latest",
+      "python-version": 3.7,
+      "token": "not_install_ray",
+      "runOn": "always"
+    },
+    
+    {
+      "runs_on": "windows-latest",
+      "python-version": 3.7,
+      "token": "not_install_ray",
+      "runOn": "refs/heads/stable"
+    },
+    {
+      "runs_on": "macos-latest",
+      "python-version": 3.7,
+      "token": "not_install_ray",
+      "runOn": "refs/heads/stable"
+    },
+    
+    {
+      "runs_on": "windows-latest",
+      "python-version": 3.8,
+      "token": "not_install_ray",
+      "runOn": "refs/heads/stable"
+    },
+    {
+      "runs_on": "macos-latest",
+      "python-version": 3.8,
+      "token": "not_install_ray",
+      "runOn": "refs/heads/stable"
+    },
+    {
+      "runs_on": "ubuntu-latest",
+      "python-version": 3.8,
+      "token": "install_ray",
+      "runOn": "always"
+    },
+
+    {
+      "runs_on": "windows-latest",
+      "python-version": 3.6,
+      "token": "not_install_ray",
+      "runOn": "refs/heads/stable"
+    },
+    {
+      "runs_on": "macos-latest",
+      "python-version": 3.6,
+      "token": "not_install_ray",
+      "runOn": "refs/heads/stable"
+    },
+    {
+      "runs_on": "ubuntu-latest",
+      "python-version": 3.6,
+      "token": "install_ray",
+      "runOn": "always"
+    }
+  ]

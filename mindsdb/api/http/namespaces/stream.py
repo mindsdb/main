@@ -33,6 +33,7 @@ def to_dict(stream):
             "predictor": stream.predictor,
             "stream_in": stream.stream_in,
             "stream_out": stream.stream_out,
+            "stream_anomaly": stream.stream_anomaly,
             "integration": stream.integration,
             "name": stream.name}
 
@@ -73,17 +74,15 @@ class Stream(Resource):
         advanced_params = params.get('advanced', {})
         predictor = params['predictor']
         stream_in = params['stream_in']
-        stream_out  = params['stream_out']
+        stream_out = params['stream_out']
+        stream_anomaly = params.get('stream_anomaly', stream_out)
         _type = params.get('type', 'forecast')
-        if _type.lower() == StreamTypes.timeseries:
-            ts_params = params.get('ts_params')
-        else:
-            ts_params = {}
         if predictor not in get_predictors():
             abort(400, f"requested predictor '{predictor}' is not ready or doens't exist")
         stream = StreamDB(_type=_type, name=name, connection_params=connection_params, advanced_params=advanced_params,
                           predictor=predictor, stream_in=stream_in, stream_out=stream_out,
-                          integration=integration_name, company_id=COMPANY_ID, ts_params=ts_params)
+                          integration=integration_name, company_id=COMPANY_ID,
+                          stream_anomaly=stream_anomaly)
 
         session.add(stream)
         session.commit()

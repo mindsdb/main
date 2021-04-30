@@ -160,7 +160,7 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
     def server_close(srv):
         srv.server_close()
 
-    def initSession(self):
+    def init_session(self, company_id=None):
         global connection_id
         log.debug('New connection [{ip}:{port}]'.format(
             ip=self.client_address[0], port=self.client_address[1]))
@@ -168,7 +168,7 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
 
         connection_id += 1
 
-        self.session = SessionController()
+        self.session = SessionController(company_id=company_id)
 
         if hasattr(self.server, 'salt') and isinstance(self.server.salt, str):
             self.salt = self.server.salt
@@ -210,8 +210,6 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
         username = None
         password = None
 
-        if self.session is None:
-            self.initSession()
         log.debug('send HandshakePacket')
         self.packet(HandshakePacket).send()
 
@@ -1508,9 +1506,14 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
             self.request.recv(4)
             client_capabilities = self.request.recv(8)
             client_capabilities = struct.unpack('L', client_capabilities)[0]
+
+            company_id = self.request.recv(4)
+            company_id = struct.unpack('I', company_id)[0]
+
             return {
                 'is_cloud': True,
-                'client_capabilities': client_capabilities
+                'client_capabilities': client_capabilities,
+                'company_id': company_id
             }
 
         return {
@@ -1524,12 +1527,11 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
         """
         log.debug('handle new incoming connection')
         cloud_connection = self.is_cloud_connection()
+        self.init_session(company_id=cloud_connection.get('company_id'))
         if cloud_connection['is_cloud'] is False:
             if self.handshake() is False:
                 return
         else:
-            if self.session is None:
-                self.initSession()
             self.client_capabilities = ClentCapabilities(cloud_connection['client_capabilities'])
             self.session.username = 'cloud'
             self.session.auth = True

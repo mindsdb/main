@@ -1,45 +1,40 @@
-import os
 import json
-from threading import Thread, Event
+from threading import Thread
 
 import kafka
 from kafka.admin import NewTopic
 
 from mindsdb.utilities.log import log
-from mindsdb.streams.base.base_stream import StreamTypes
+from mindsdb.streams.base.base_stream import StreamTypes, BaseStream
 from mindsdb.interfaces.storage.db import session
 from mindsdb.interfaces.storage.db import Predictor as DBPredictor
-from mindsdb.interfaces.model.model_interface import ModelInterface as NativeInterface
 
-class KafkaStream(Thread):
-    def __init__(self, connection_info, advanced_info, topic_in, topic_out, predictor, _type, **ts_params):
+
+class KafkaStream(Thread, BaseStream):
+    def __init__(self, name, connection_info, advanced_info, topic_in, topic_out, topic_anomaly, predictor, _type):
+        self.stream_name = name
         self.connection_info = connection_info
         self.advanced_info = advanced_info
         self.predictor = predictor
         self.stream_in_name = topic_in
         self.stream_out_name = topic_out
+        self.stream_anomaly_name = topic_anomaly
         self.consumer = kafka.KafkaConsumer(**self.connection_info, **self.advanced_info.get('consumer', {}))
         self.consumer.subscribe(topics=[self.stream_in_name])
         self.producer = kafka.KafkaProducer(**self.connection_info, **self.advanced_info.get('producer', {}))
         self.admin = kafka.KafkaAdminClient(**self.connection_info)
+
+        BaseStream.__init__(self)
         try:
             self.topic = NewTopic(self.stream_out_name, num_partitions=1, replication_factor=1)
-            self.admin.create_topics([self.topic])
+            self.topic_anomaly = NewTopic(self.stream_anomaly_name, num_partitions=1, replication_factor=1)
+            self.admin.create_topics([self.topic, self.topic_anomaly])
         except kafka.errors.TopicAlreadyExistsError:
             pass
         self._type = _type
-        self.native_interface = NativeInterface()
-        self.format_flag = 'explain'
 
-        self.stop_event = Event()
-        self.company_id = os.environ.get('MINDSDB_COMPANY_ID', None)
         self.caches = {}
-        self.ts_params = ts_params
         if self._type.lower() == StreamTypes.timeseries:
-            self.target = self.ts_params.get('target')
-            self.window = self.ts_params.get('window_size')
-            self.gb = self.ts_params.get('group_by')
-            self.dt = self.ts_params.get('order_by')
             super().__init__(target=KafkaStream.make_timeseries_predictions, args=(self,))
         else:
             super().__init__(target=KafkaStream.make_prediction, args=(self,))
@@ -57,8 +52,9 @@ class KafkaStream(Thread):
         for res in result:
             in_json = json.dumps(res)
             to_send = in_json.encode('utf-8')
+            out_stream = self.stream_anomaly_name if self.is_anomaly(res) else self.stream_out_name
             log.error(f"sending {to_send}")
-            self.producer.send(self.stream_out_name, to_send)
+            self.producer.send(out_stream, to_send)
         self.caches[cache_name] = self.caches[cache_name][1:]
 
     def make_prediction_from_cache(self, cache_name):
@@ -97,6 +93,12 @@ class KafkaStream(Thread):
         if predict_record is None:
             log.error(f"Error creating stream: requested predictor {self.predictor} is not exist")
             return
+        ts_settings = self.get_ts_settings(predict_record)
+        log.error(f"STREAM TS_SETTINGS: {ts_settings}")
+        self.target = ts_settings['to_predict'][0]
+        self.window = ts_settings['window']
+        self.gb = ts_settings['group_by'][0]
+        self.dt = ts_settings['order_by'][0]
 
         while not self.stop_event.wait(0.5):
             try:
@@ -123,10 +125,11 @@ class KafkaStream(Thread):
                 result = self.native_interface.predict(self.predictor, self.format_flag, when_data=when_data)
                 log.error(f"STREAM: got {result}")
                 for res in result:
-                    in_json = json.dumps({"prediction": res})
+                    in_json = json.dumps(res)
                     to_send = in_json.encode('utf-8')
                     log.error(f"sending {to_send}")
-                    self.producer.send(self.stream_out_name, to_send)
+                    out_stream = self.stream_anomaly_name if self.is_anomaly(res) else self.stream_out_name
+                    self.producer.send(out_stream, to_send)
             except StopIteration:
                 pass
         log.error("Stopping stream..")
