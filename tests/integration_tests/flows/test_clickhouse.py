@@ -121,6 +121,7 @@ class ClickhouseTest(unittest.TestCase):
         self.assertTrue(TEST_DATA_TABLE in self.get_tables_in('test_data'))
 
         mindsdb_tables = self.get_tables_in(MINDSDB_DATABASE)
+        print(f'TABLES {mindsdb_tables}')
         self.assertTrue(len(mindsdb_tables) >= 2)
         self.assertTrue('predictors' in mindsdb_tables)
         self.assertTrue('commands' in mindsdb_tables)
