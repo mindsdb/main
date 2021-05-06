@@ -32,9 +32,8 @@ class MySQLConnectionChecker:
 
 
 class MySQL(Integration, MySQLConnectionChecker):
-    def __init__(self, config, name):
+    def __init__(self, config, name, db_info):
         super().__init__(config, name)
-        db_info = self.config['integrations'][self.name]
         self.user = db_info.get('user')
         self.password = db_info.get('password')
         self.host = db_info.get('host')

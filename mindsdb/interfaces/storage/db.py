@@ -70,16 +70,6 @@ class Semaphor(Base):
     uniq_const = UniqueConstraint('entity_type', 'entity_id')
 
 
-class Configuration(Base):
-    __tablename__ = 'configuration'
-
-    id = Column(Integer, primary_key=True)
-    updated_at = Column(DateTime, default=datetime.datetime.now, onupdate=datetime.datetime.now)
-    created_at = Column(DateTime, default=datetime.datetime.now)
-    data = Column(String)  # A JSON
-    company_id = Column(Integer, unique=True)
-
-
 class Datasource(Base):
     __tablename__ = 'datasource'
 
@@ -143,18 +133,28 @@ class Log(Base):
 class Stream(Base):
     __tablename__ = 'stream'
     id = Column(Integer, primary_key=True)
-    # integration_id = Column(Integer, ForeignKey('integration.id'))
+    updated_at = Column(DateTime, default=datetime.datetime.now, onupdate=datetime.datetime.now)
     created_at = Column(DateTime, default=datetime.datetime.now)
+    company_id = Column(Integer)
     _type = Column(String)
     predictor = Column(String)
     stream_in = Column(String)
     stream_out = Column(String)
     stream_anomaly = Column(String)
     integration = Column(String)
-    company_id = Column(Integer)
     name = Column(String)
     connection_params = Column(Json)
     advanced_params = Column(Json)
+
+
+class Integration(Base):
+    __tablename__ = 'integration'
+    id = Column(Integer, primary_key=True)
+    updated_at = Column(DateTime, default=datetime.datetime.now, onupdate=datetime.datetime.now)
+    created_at = Column(DateTime, default=datetime.datetime.now)
+    name = Column(String)
+    data = Column(Json)
+    company_id = Column(Integer)
 
 
 Base.metadata.create_all(engine)

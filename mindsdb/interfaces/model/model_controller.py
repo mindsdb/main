@@ -2,12 +2,10 @@
 import xmlrpc
 from xmlrpc.server import SimpleXMLRPCServer
 from dateutil.parser import parse as parse_datetime
-import os
 import pickle
 from pathlib import Path
 import psutil
 import datetime
-from copy import deepcopy
 import time
 from contextlib import contextmanager
 
@@ -25,50 +23,43 @@ class ModelController():
     def __init__(self, ray_based):
         self.config = Config()
         self.fs_store = FsSotre()
-        self.company_id = os.environ.get('MINDSDB_COMPANY_ID', None)
-        self.dbw = DatabaseWrapper()
         self.predictor_cache = {}
         self.ray_based = ray_based
 
     def _pack(self, obj):
-            if self.ray_based:
-                return obj
-            return xmlrpc.client.Binary(pickle.dumps(obj))
+        if self.ray_based:
+            return obj
+        return xmlrpc.client.Binary(pickle.dumps(obj))
 
     def _invalidate_cached_predictors(self):
         from mindsdb_datasources import FileDS, ClickhouseDS, MariaDS, MySqlDS, PostgresDS, MSSQLDS, MongoDS, SnowflakeDS, AthenaDS
-        import mindsdb_native
-        from mindsdb_native import F
-        from mindsdb_native.libs.constants.mindsdb import DATA_SUBTYPES
         from mindsdb.interfaces.storage.db import session, Predictor
-
 
         # @TODO: Cache will become stale if the respective NativeInterface is not invoked yet a bunch of predictors remained cached, no matter where we invoke it. In practice shouldn't be a big issue though
         for predictor_name in list(self.predictor_cache.keys()):
             if (datetime.datetime.now() - self.predictor_cache[predictor_name]['created']).total_seconds() > 1200:
                 del self.predictor_cache[predictor_name]
 
-    def _lock_predictor(self, id, mode='write'):
+    def _lock_predictor(self, id, mode='write', company_id=None):
         from mindsdb.interfaces.storage.db import session, Semaphor
 
         while True:
-            semaphor_record = session.query(Semaphor).filter_by(company_id=self.company_id, entity_id=id, entity_type='predictor').first()
+            semaphor_record = session.query(Semaphor).filter_by(company_id=company_id, entity_id=id, entity_type='predictor').first()
             if semaphor_record is not None:
                 if mode == 'read' and semaphor_record.action == 'read':
                     return True
             try:
-                semaphor_record = Semaphor(company_id=self.company_id, entity_id=id, entity_type='predictor', action=mode)
+                semaphor_record = Semaphor(company_id=company_id, entity_id=id, entity_type='predictor', action=mode)
                 session.add(semaphor_record)
                 session.commit()
                 return True
-            except Excpetion as e:
+            except Exception:
                 pass
             time.sleep(1)
 
-
-    def _unlock_predictor(self, id):
+    def _unlock_predictor(self, id, company_id=None):
         from mindsdb.interfaces.storage.db import session, Semaphor
-        semaphor_record = session.query(Semaphor).filter_by(company_id=self.company_id, entity_id=id, entity_type='predictor').first()
+        semaphor_record = session.query(Semaphor).filter_by(company_id=company_id, entity_id=id, entity_type='predictor').first()
         if semaphor_record is not None:
             session.delete(semaphor_record)
             session.commit()
@@ -81,22 +72,18 @@ class ModelController():
         finally:
             self._unlock_predictor(id)
 
-    def _setup_for_creation(self, name):
+    def _setup_for_creation(self, name, original_name, company_id=None):
         from mindsdb_datasources import FileDS, ClickhouseDS, MariaDS, MySqlDS, PostgresDS, MSSQLDS, MongoDS, SnowflakeDS, AthenaDS
-        import mindsdb_native
-        from mindsdb_native import F
-        from mindsdb_native.libs.constants.mindsdb import DATA_SUBTYPES
         from mindsdb.interfaces.storage.db import session, Predictor
-
 
         if name in self.predictor_cache:
             del self.predictor_cache[name]
         # Here for no particular reason, because we want to run this sometimes but not too often
         self._invalidate_cached_predictors()
 
-        predictor_dir = Path(self.config.paths['predictors']).joinpath(name)
+        predictor_dir = Path(self.config['paths']['predictors']).joinpath(name)
         create_directory(predictor_dir)
-        predictor_record = Predictor(company_id=self.company_id, name=name, is_custom=False)
+        predictor_record = Predictor(company_id=company_id, name=original_name, is_custom=False)
 
         session.add(predictor_record)
         session.commit()
@@ -129,33 +116,42 @@ class ModelController():
         session.commit()
         return predictor_record
 
-    def create(self, name):
+    def create(self, name, company_id=None):
         from mindsdb_datasources import FileDS, ClickhouseDS, MariaDS, MySqlDS, PostgresDS, MSSQLDS, MongoDS, SnowflakeDS, AthenaDS
         import mindsdb_native
-        from mindsdb_native import F
-        from mindsdb_native.libs.constants.mindsdb import DATA_SUBTYPES
         from mindsdb.interfaces.storage.db import session, Predictor
 
+        original_name = name
+        name = f'{company_id}@@@@@{name}'
 
-        self._setup_for_creation(name)
+        self._setup_for_creation(name, original_name, company_id=company_id)
         predictor = mindsdb_native.Predictor(name=name, run_env={'trigger': 'mindsdb'})
         return predictor
 
-    def learn(self, name, from_data, to_predict, datasource_id, kwargs={}):
+    def learn(self, name, from_data, to_predict, datasource_id, kwargs={}, company_id=None):
         from mindsdb.interfaces.model.learn_process import LearnProcess, run_learn
 
         create_process_mark('learn')
+        original_name = name
+        name = f'{company_id}@@@@@{name}'
 
         join_learn_process = kwargs.get('join_learn_process', False)
-        if 'join_learn_process' in kwargs:
-            del kwargs['join_learn_process']
 
-        self._setup_for_creation(name)
+        self._setup_for_creation(name, original_name, company_id=company_id)
 
         if self.ray_based:
-            run_learn(name, from_data, to_predict, kwargs, datasource_id)
+            run_learn(
+                name=name,
+                db_name=original_name,
+                from_data=from_data,
+                to_predict=to_predict,
+                kwargs=kwargs,
+                datasource_id=datasource_id,
+                company_id=company_id
+            )
+
         else:
-            p = LearnProcess(name, from_data, to_predict, kwargs, datasource_id)
+            p = LearnProcess(name, original_name, from_data, to_predict, kwargs, datasource_id, company_id)
             p.start()
             if join_learn_process is True:
                 p.join()
@@ -166,25 +162,28 @@ class ModelController():
         delete_process_mark('learn')
         return 0
 
-    def predict(self, name, pred_format, when_data=None, kwargs={}):
+    def predict(self, name, pred_format, when_data=None, kwargs={}, company_id=None):
         from mindsdb_datasources import FileDS, ClickhouseDS, MariaDS, MySqlDS, PostgresDS, MSSQLDS, MongoDS, SnowflakeDS, AthenaDS
         import mindsdb_native
         from mindsdb.interfaces.storage.db import session, Predictor
 
         create_process_mark('predict')
+        original_name = name
+        name = f'{company_id}@@@@@{name}'
 
         if name not in self.predictor_cache:
             # Clear the cache entirely if we have less than 1.2 GB left
             if psutil.virtual_memory().available < 1.2 * pow(10, 9):
                 self.predictor_cache = {}
 
-            predictor_record = Predictor.query.filter_by(company_id=self.company_id, name=name, is_custom=False).first()
+            predictor_record = Predictor.query.filter_by(company_id=company_id, name=original_name, is_custom=False).first()
             if predictor_record.data['status'] == 'complete':
-                self.fs_store.get(name, f'predictor_{self.company_id}_{predictor_record.id}', self.config['paths']['predictors'])
+                self.fs_store.get(name, f'predictor_{company_id}_{predictor_record.id}', self.config['paths']['predictors'])
                 self.predictor_cache[name] = {
                     'predictor': mindsdb_native.Predictor(name=name, run_env={'trigger': 'mindsdb'}),
                     'created': datetime.datetime.now()
                 }
+                predictor = mindsdb_native.Predictor(name=name, run_env={'trigger': 'mindsdb'})
 
         if isinstance(when_data, dict) and 'kwargs' in when_data and 'args' in when_data:
             data_source = getattr(mindsdb_datasources, when_data['class'])(*when_data['args'], **when_data['kwargs'])
@@ -195,10 +194,13 @@ class ModelController():
             except Exception:
                 data_source = when_data
 
-        predictions = self.predictor_cache[name]['predictor'].predict(
+        predictor = self.predictor_cache[name]['predictor']
+
+        predictions = predictor.predict(
             when_data=data_source,
             **kwargs
         )
+        del self.predictor_cache[name]
         if pred_format == 'explain' or pred_format == 'new_explain':
             predictions = [p.explain() for p in predictions]
         elif pred_format == 'dict':
@@ -212,32 +214,45 @@ class ModelController():
         delete_process_mark('predict')
         return self._pack(predictions)
 
-    def analyse_dataset(self, ds):
+    def analyse_dataset(self, ds, company_id=None):
         from mindsdb_datasources import FileDS, ClickhouseDS, MariaDS, MySqlDS, PostgresDS, MSSQLDS, MongoDS, SnowflakeDS, AthenaDS
         from mindsdb_native import F
 
         create_process_mark('analyse')
-
         ds = eval(ds['class'])(*ds['args'], **ds['kwargs'])
         analysis = F.analyse_dataset(ds)
 
         delete_process_mark('analyse')
         return self._pack(analysis)
 
-    def get_model_data(self, name, db_fix=True):
+    def get_model_data(self, name, db_fix=True, company_id=None):
         from mindsdb_native import F
         from mindsdb_native.libs.constants.mindsdb import DATA_SUBTYPES
         from mindsdb.interfaces.storage.db import session, Predictor
+        import torch
+        import gc
 
-        predictor_record = Predictor.query.filter_by(company_id=self.company_id, name=name, is_custom=False).first()
+        if '@@@@@' in name:
+            name = name.split('@@@@@')[1]
+
+        original_name = name
+        name = f'{company_id}@@@@@{name}'
+
+        predictor_record = Predictor.query.filter_by(company_id=company_id, name=original_name, is_custom=False).first()
         predictor_record = self._try_outdate_db_status(predictor_record)
         model = predictor_record.data
         if model is None or model['status'] == 'training':
             try:
-                self.fs_store.get(name, f'predictor_{self.company_id}_{predictor_record.id}', self.config['paths']['predictors'])
+                self.fs_store.get(name, f'predictor_{company_id}_{predictor_record.id}', self.config['paths']['predictors'])
                 new_model_data = F.get_model_data(name)
             except Exception:
                 new_model_data = None
+
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            gc.collect()
 
             if predictor_record.data is None or (new_model_data is not None and len(new_model_data) > len(predictor_record.data)):
                 predictor_record.data = new_model_data
@@ -258,22 +273,23 @@ class ModelController():
         model['updated_at'] = str(parse_datetime(str(predictor_record.updated_at).split('.')[0]))
         model['predict'] = predictor_record.to_predict
         model['update'] = predictor_record.update_status
+        model['name'] = model['name'].split('@@@@@')[1]
         return self._pack(model)
 
-    def get_models(self):
+    def get_models(self, company_id=None):
         from mindsdb.interfaces.storage.db import session, Predictor
 
         models = []
-        predictor_records = Predictor.query.filter_by(company_id=self.company_id, is_custom=False)
+        predictor_records = Predictor.query.filter_by(company_id=company_id, is_custom=False)
         predictor_names = [
             x.name for x in predictor_records
         ]
         for model_name in predictor_names:
             try:
                 if self.ray_based:
-                    model_data = self.get_model_data(model_name, db_fix=False)
+                    model_data = self.get_model_data(model_name, db_fix=False, company_id=company_id)
                 else:
-                    bin = self.get_model_data(model_name, db_fix=False)
+                    bin = self.get_model_data(model_name, db_fix=False, company_id=company_id)
                     model_data = pickle.loads(bin.data)
                 reduced_model_data = {}
 
@@ -295,31 +311,37 @@ class ModelController():
                 log.error(f"Can't list data for model: '{model_name}' when calling `get_models(), error: {e}`")
         return self._pack(models)
 
-    def delete_model(self, name):
+    def delete_model(self, name, company_id=None):
         from mindsdb_native import F
         from mindsdb_native.libs.constants.mindsdb import DATA_SUBTYPES
         from mindsdb.interfaces.storage.db import session, Predictor
 
-        predictor_record = Predictor.query.filter_by(company_id=self.company_id, name=name, is_custom=False).first()
+        original_name = name
+        name = f'{company_id}@@@@@{name}'
+
+        predictor_record = Predictor.query.filter_by(company_id=company_id, name=original_name, is_custom=False).first()
         id = predictor_record.id
         session.delete(predictor_record)
         session.commit()
         F.delete_model(name)
-        self.dbw.unregister_predictor(name)
-        self.fs_store.delete(f'predictor_{self.company_id}_{id}')
+        DatabaseWrapper(company_id).unregister_predictor(name)
+        self.fs_store.delete(f'predictor_{company_id}_{id}')
         return 0
 
-    def update_model(self, name):
+    def update_model(self, name, company_id=None):
         from mindsdb_native import F
         from mindsdb_worker.updater.update_model import update_model
         from mindsdb.interfaces.storage.db import session, Predictor
         from mindsdb.interfaces.datastore.datastore import DataStore
 
+        original_name = name
+        name = f'{company_id}@@@@@{name}'
+
         try:
-            predictor_record = Predictor.query.filter_by(company_id=self.company_id, name=name, is_custom=False).first()
+            predictor_record = Predictor.query.filter_by(company_id=company_id, name=original_name, is_custom=False).first()
             predictor_record.update_status = 'updating'
             session.commit()
-            update_model(name, self.delete_model, F.delete_model, self.learn, self._lock_context, self.company_id, self.config['paths']['predictors'], predictor_record, self.fs_store, DataStore())
+            update_model(name, self.delete_model, F.delete_model, self.learn, self._lock_context, company_id, self.config['paths']['predictors'], predictor_record, self.fs_store, DataStore())
 
             predictor_record = self._update_db_status(predictor_record)
         except Exception as e:
@@ -332,19 +354,34 @@ class ModelController():
 try:
     from mindsdb_worker.cluster.ray_controller import ray_ify
     import ray
-    ray.init(ignore_reinit_error=True)
+    try:
+        ray.init(ignore_reinit_error=True, address='auto')
+    except Exception:
+        ray.init(ignore_reinit_error=True)
     ModelController = ray_ify(ModelController)
 except Exception as e:
-    print(e)
-    pass
+    log.error(e)
 
 
 def ping(): return True
 
 
 def start():
+    class Server(object):
+        def __init__(self):
+            self.server = SimpleXMLRPCServer(("localhost", 19329))
+
+        def register_function(self, function, name=None):
+            def _function(args, kwargs):
+                return function(*args, **kwargs)
+            _function.__name__ = function.__name__
+            self.server.register_function(_function, name)
+
+        def serve_forever(self):
+            self.server.serve_forever()
+
     controller = ModelController(False)
-    server = SimpleXMLRPCServer(("localhost", 19329))
+    server = Server()
 
     server.register_function(controller.create, "create")
     server.register_function(controller.learn, "learn")

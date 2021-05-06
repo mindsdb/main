@@ -31,16 +31,14 @@ import time
 import moz_sql_parser as sql_parser
 
 from mindsdb.utilities.wizards import make_ssl_cert
-
+from mindsdb.utilities.config import Config
 from mindsdb.api.mysql.mysql_proxy.data_types.mysql_packet import Packet
 from mindsdb.api.mysql.mysql_proxy.controllers.session_controller import SessionController
-from mindsdb.api.mysql.mysql_proxy.datahub import init_datahub
 from mindsdb.api.mysql.mysql_proxy.classes.client_capabilities import ClentCapabilities
 from mindsdb.api.mysql.mysql_proxy.classes.server_capabilities import server_capabilities
 from mindsdb.api.mysql.mysql_proxy.classes.sql_statement_parser import SqlStatementParser, SQL_PARAMETER, SQL_DEFAULT
 from mindsdb.api.mysql.mysql_proxy.utilities import log
 from mindsdb.api.mysql.mysql_proxy.external_libs.mysql_scramble import scramble as scramble_func
-
 from mindsdb.api.mysql.mysql_proxy.classes.sql_query import (
     SQLQuery,
     NotImplementedError,
@@ -79,22 +77,13 @@ from mindsdb.api.mysql.mysql_proxy.data_types.mysql_packets import (
 )
 
 from mindsdb.interfaces.datastore.datastore import DataStore
-from mindsdb.interfaces.model.model_interface import ModelInterface as NativeInterface
-from mindsdb.interfaces.custom.custom_models import CustomModels
-from mindsdb.interfaces.ai_table.ai_table import AITable_store
-
+from mindsdb.interfaces.model.model_interface import ModelInterface
+from mindsdb.interfaces.database.integrations import get_db_integrations, get_db_integration
 
 connection_id = 0
 
-default_store = None
-mdb = None
-custom_models = None
-datahub = None
-config = None
-ai_table = None
 
-
-def check_auth(username, password, scramble_func, salt, config):
+def check_auth(username, password, scramble_func, salt, company_id, config):
     '''
     '''
     try:
@@ -102,7 +91,6 @@ def check_auth(username, password, scramble_func, salt, config):
         hardcoded_password = config['api']['mysql']['password']
         hardcoded_password_hash = scramble_func(hardcoded_password, salt)
         hardcoded_password = hardcoded_password.encode()
-        integrations_names = config['integrations'].keys()
 
         if password is None:
             password = ''
@@ -112,11 +100,12 @@ def check_auth(username, password, scramble_func, salt, config):
         integration = None
         integration_type = None
         extracted_username = username
+        integrations_names = get_db_integrations(company_id).keys()
         for integration_name in integrations_names:
             if username == f'{hardcoded_user}_{integration_name}':
                 extracted_username = hardcoded_user
                 integration = integration_name
-                integration_type = config['integrations'][integration]['type']
+                integration_type = get_db_integration(integration, company_id)['type']
 
         if extracted_username != hardcoded_user:
             log.warning(f'Check auth, user={username}: user mismatch')
@@ -166,9 +155,15 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
             ip=self.client_address[0], port=self.client_address[1]))
         log.debug(self.__dict__)
 
-        connection_id += 1
-
-        self.session = SessionController(company_id=company_id)
+        if self.server.connection_id >= 65025:
+            self.server.connection_id = 0
+        self.server.connection_id += 1
+        self.connection_id = self.server.connection_id
+        self.session = SessionController(
+            self.server.original_model_interface,
+            self.server.original_data_store,
+            company_id=company_id
+        )
 
         if hasattr(self.server, 'salt') and isinstance(self.server.salt, str):
             self.salt = self.server.salt
@@ -177,7 +172,6 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
 
         self.socket = self.request
         self.count = 0  # next packet number
-        self.connection_id = connection_id
         self.logging = log
 
         self.current_transaction = None
@@ -266,8 +260,10 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
                     else:
                         password = get_fast_auth_password()
         elif 'caching_sha2_password' in client_auth_plugin:
-            log.debug(f'Check auth, user={username}, ssl={self.session.is_ssl}, auth_method={client_auth_plugin}: '
-                     'check auth using caching_sha2_password')
+            log.debug(
+                f'Check auth, user={username}, ssl={self.session.is_ssl}, auth_method={client_auth_plugin}: '
+                'check auth using caching_sha2_password'
+            )
             password = handshake_resp.enc_password.value
             if password == b'\x00':
                 password = ''
@@ -292,7 +288,7 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
         log.debug(f'Check auth, user={username}, ssl={self.session.is_ssl}, auth_method={client_auth_plugin}: '
                   f'connecting to database {self.session.database}')
 
-        auth_data = self.server.check_auth(username, password, scramble_func, self.salt)
+        auth_data = self.server.check_auth(username, password, scramble_func, self.salt, self.session.company_id)
         if auth_data['success']:
             self.session.username = auth_data['username']
             self.session.auth = True
@@ -352,7 +348,9 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
             Parameters:
              - insert - dict with keys as columns of mindsb.predictors table.
         '''
-        global mdb, default_store, config, custom_models
+        model_interface = self.session.model_interface
+        custom_models = self.session.custom_models
+        data_store = self.session.data_store
 
         for key in insert.keys():
             if insert[key] is SQL_DEFAULT:
@@ -376,7 +374,7 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
             ).send()
             return
 
-        models = mdb.get_models()
+        models = model_interface.get_models()
         if insert['name'] in [x['name'] for x in models]:
             self.packet(
                 ErrPacket,
@@ -408,43 +406,45 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
                 ).send()
                 return
             insert['select_data_query'] = insert['select_data_query'].replace(r"\'", "'")
-            ds, ds_name = default_store.save_datasource(insert['name'], integration, {'query': insert['select_data_query']})
+            ds, ds_name = data_store.save_datasource(insert['name'], integration, {'query': insert['select_data_query']})
         elif is_external_datasource:
-            ds = default_store.get_datasource_obj(insert['external_datasource'], raw=True)
+            ds = data_store.get_datasource_obj(insert['external_datasource'], raw=True)
             ds_name = insert['external_datasource']
 
         insert['predict'] = [x.strip() for x in insert['predict'].split(',')]
 
-        ds_data = default_store.get_datasource(ds_name)
+        ds_data = data_store.get_datasource(ds_name)
         ds_columns = [x['name'] for x in ds_data['columns']]
         for col in insert['predict']:
             if col not in ds_columns:
                 if is_select_data_query:
-                    default_store.delete_datasource(ds_name)
+                    data_store.delete_datasource(ds_name)
                 raise Exception(f"Column '{col}' not exists")
 
         if insert['name'] in [x['name'] for x in custom_models.get_models()]:
             custom_models.learn(insert['name'], ds, insert['predict'], ds_data['id'], kwargs)
         else:
-            mdb.learn(insert['name'], ds, insert['predict'], ds_data['id'], kwargs)
+            model_interface.learn(insert['name'], ds, insert['predict'], ds_data['id'], kwargs=kwargs)
 
         self.packet(OkPacket).send()
 
     def answer_create_ai_table(self, struct):
-        global mdb, default_store, config, ai_table
+        ai_table = self.session.ai_table
+        model_interface = self.session.model_interface
+        company_id = self.session.company_id
 
         table = ai_table.get_ai_table(struct['ai_table_name'])
         if table is not None:
             raise Exception(f"AT Table with name {struct['ai_table_name']} already exists")
 
         # check predictor exists
-        models = mdb.get_models()
+        models = model_interface.get_models()
         models_names = [x['name'] for x in models]
         if struct['predictor_name'] not in models_names:
             raise Exception(f"Predictor with name {struct['predictor_name']} not exists")
 
         # check integration exists
-        if struct['integration_name'] not in config['integrations']:
+        if get_db_integration(struct['integration_name'], company_id) is None:
             raise Exception(f"Integration with name {struct['integration_name']} not exists")
 
         ai_table.add(
@@ -459,11 +459,12 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
         self.packet(OkPacket).send()
 
     def answer_create_predictor(self, struct):
-        global mdb, default_store, config
+        model_interface = self.session.model_interface
+        data_store = self.session.data_store
+        company_id = self.session.company_id
 
-        if struct['integration_name'] not in config['integrations'].keys():
-            # use first integration by default
-            struct['integration_name'] = list(config['integrations'].keys())[0]
+        if get_db_integration(struct['integration_name'], company_id) is None:
+            struct['integration_name'] = list(get_db_integrations(company_id).keys())[0]
 
         is_temp_ds = False
         ds_name = struct.get('datasource_name')
@@ -471,8 +472,8 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
             ds_name = f'temp_ds_{int(time.time()*100)}'
             is_temp_ds = True
 
-        ds, ds_name = default_store.save_datasource(ds_name, struct['integration_name'], {'query': struct['select']})
-        ds_data = default_store.get_datasource(ds_name)
+        ds, ds_name = data_store.save_datasource(ds_name, struct['integration_name'], {'query': struct['select']})
+        ds_data = data_store.get_datasource(ds_name)
 
         # TODO add alias here
         predict = [x['name'] for x in struct['predict']]
@@ -489,21 +490,25 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
             else:
                 kwargs['timeseries_settings'].update(timeseries_settings)
 
-        mdb.learn(struct['predictor_name'], ds, predict, ds_data['id'], kwargs)
+        model_interface.learn(struct['predictor_name'], ds, predict, ds_data['id'], kwargs=kwargs)
 
         if is_temp_ds:
-            default_store.delete_datasource(ds_name)
+            data_store.delete_datasource(ds_name)
 
         self.packet(OkPacket).send()
 
     def delete_predictor_sql(self, sql):
-        global datahub
-
         fake_sql = sql.strip(' ')
         fake_sql = 'select name ' + fake_sql[len('delete '):]
-        query = SQLQuery(fake_sql, integration=self.session.integration, database=self.session.database)
+        query = SQLQuery(
+            fake_sql,
+            integration=self.session.integration,
+            database=self.session.database
+        )
 
-        result = query.fetch(datahub)
+        result = query.fetch(
+            self.session.datahub
+        )
 
         if result['success'] is False:
             self.packet(
@@ -519,7 +524,7 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
             raise NotImplementedError('nothing to delete')
 
         for predictor_name in predictors_names:
-            datahub['mindsdb'].delete_predictor(predictor_name)
+            self.session.datahub['mindsdb'].delete_predictor(predictor_name)
 
     def handle_custom_command(self, command):
         command = command.strip(' ;').split()
@@ -709,13 +714,14 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
             raise NotImplementedError(f"Unknown statement type: {prepared_stmt['type']}")
 
     def answer_stmt_fetch(self, stmt_id, limit=100000):
-        global datahub
         prepared_stmt = self.session.prepared_stmts[stmt_id]
         sql = prepared_stmt['statement'].sql
         fetched = prepared_stmt['fetched']
         query = SQLQuery(sql, integration=self.session.integration, database=self.session.database)
 
-        result = query.fetch(datahub)
+        result = query.fetch(
+            self.session.datahub
+        )
 
         if result['success'] is False:
             self.packet(
@@ -1367,7 +1373,7 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
                 'type': TYPES.MYSQL_TYPE_LONG,
                 'charset': CHARSET_NUMBERS['binary']
             }],
-            data=[[96]]     # can be any UNIQUE number
+            data=[[self.connection_id]]
         )
         packages.append(self.packet(OkPacket, eof=True, status=0x0002))
         self.sendPackageGroup(packages)
@@ -1407,8 +1413,9 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
         self.sendPackageGroup(packages)
 
     def selectAnswer(self, query):
-        global datahub
-        result = query.fetch(datahub)
+        result = query.fetch(
+            self.session.datahub
+        )
 
         if result['success'] is False:
             self.packet(
@@ -1617,17 +1624,11 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
         return p
 
     @staticmethod
-    def startProxy(_config):
-        global default_store
-        global mdb
-        global datahub
-        global config
-        global custom_models
-        global ai_table
+    def startProxy():
         """
         Create a server and wait for incoming connections until Ctrl-C
         """
-        config = _config
+        config = Config()
 
         cert_path = config['api']['mysql'].get('certificate_path')
         if cert_path is None or cert_path == '':
@@ -1640,12 +1641,6 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
             config['api']['mysql']['ssl']
         )
 
-        ai_table = AITable_store()
-        default_store = DataStore()
-        mdb = NativeInterface()
-        custom_models = CustomModels()
-        datahub = init_datahub(config)
-
         host = config['api']['mysql']['host']
         port = int(config['api']['mysql']['port'])
 
@@ -1656,6 +1651,10 @@ class MysqlProxy(SocketServer.BaseRequestHandler):
         server.mindsdb_config = config
         server.check_auth = partial(check_auth, config=config)
         server.cert_path = cert_path
+        server.connection_id = 0
+
+        server.original_model_interface = ModelInterface()
+        server.original_data_store = DataStore()
 
         atexit.register(MysqlProxy.server_close, srv=server)
 

@@ -13,13 +13,12 @@ import re
 import traceback
 
 from moz_sql_parser import parse
-from pyparsing import Word, Optional, Suppress, alphanums
 
 from mindsdb.api.mysql.mysql_proxy.classes.com_operators import join_keywords, binary_ops, unary_ops, operator_map
 from mindsdb.api.mysql.mysql_proxy.libs.constants.mysql import TYPES
 from mindsdb.api.mysql.mysql_proxy.utilities import log
 from mindsdb.api.mysql.mysql_proxy.libs.constants.mysql import ERR
-from mindsdb.interfaces.ai_table.ai_table import AITable_store
+from mindsdb.interfaces.ai_table.ai_table import AITableStore
 
 
 class TableWithoutDatasourceException(Exception):
@@ -546,7 +545,7 @@ class SQLQuery():
                 # @TODO: Figure out why initalization is so low, for now only initialize it when needed
                 # We should probably just pass this to the SQLQuery the same way we do integrations, databases, etc
                 if self.ai_table is None:
-                    self.ai_table = AITable_store()
+                    self.ai_table = AITableStore()
 
                 if False and len(tables) == 1 and (
                         tables[0].lower() in ['mindsdb.predictors', 'mindsdb.commands'] \

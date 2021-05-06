@@ -5,6 +5,7 @@ from mindsdb.streams.redis.redis_stream import RedisStream
 from mindsdb.streams.base.base_stream import StreamTypes
 
 from mindsdb.interfaces.storage.db import session, Stream
+from mindsdb.interfaces.database.integrations import get_db_integration
 
 
 class RedisConnectionChecker:
@@ -32,7 +33,7 @@ class Redis(StreamIntegration, RedisConnectionChecker):
     than classical Integration."""
     def __init__(self, config, name):
         StreamIntegration.__init__(self, config, name)
-        integration_info = self.config['integrations'][self.name]
+        integration_info = get_db_integration(self.name, self.company_id)
 
         self.connection_info = integration_info.get("connection", {})
         self.advanced_info = integration_info.get("advanced", {})

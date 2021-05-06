@@ -1,12 +1,13 @@
 import os
 import logging
-import multiprocessing
+import torch.multiprocessing as mp
 import threading
 from pathlib import Path
 
 from werkzeug.exceptions import HTTPException
 from waitress import serve
-from flask import send_from_directory, request
+from flask import send_from_directory, request, current_app
+from flask_compress import Compress
 
 from mindsdb.api.http.namespaces.predictor import ns_conf as predictor_ns
 from mindsdb.api.http.namespaces.datasource import ns_conf as datasource_ns
@@ -16,14 +17,13 @@ from mindsdb.api.http.namespaces.stream import ns_conf as stream_ns
 from mindsdb.api.http.initialize import initialize_flask, initialize_interfaces, initialize_static
 from mindsdb.utilities.config import Config
 from mindsdb.utilities.log import initialize_log, get_log
+from mindsdb.interfaces.datastore.datastore import DataStoreWrapper
 from mindsdb.interfaces.storage.db import session
-from flask_compress import Compress
+from mindsdb.interfaces.model.model_interface import ModelInterfaceWrapper
 
 
 def start(verbose, no_studio):
     config = Config()
-    if verbose:
-        config.set(['log', 'level', 'console'], 'DEBUG')
 
     initialize_log(config, 'http', wrap_print=True)
 
@@ -37,7 +37,7 @@ def start(verbose, no_studio):
     Compress(app)
     initialize_interfaces(app)
 
-    static_root = config.paths['static']
+    static_root = config['paths']['static']
     if os.path.isabs(static_root) is False:
         static_root = os.path.join(os.getcwd(), static_root)
     static_root = Path(static_root)
@@ -73,10 +73,25 @@ def start(verbose, no_studio):
 
     @app.before_request
     def before_request():
-        company_id = request.headers.get('company-id')  # str
-        # TODO setup env according company_id, somethin like
-        # from .initialize import initialize_interfaces
-        # initialize_interfaces(current_app, company_id)
+        company_id = request.headers.get('company-id')
+
+        if company_id is not None:
+            try:
+                company_id = int(company_id)
+            except Exception as e:
+                get_log('http').error(f'Cloud not parse company id: {company_id} | exception: {e}')
+                company_id = None
+
+        request.company_id = company_id
+
+        request.default_store = DataStoreWrapper(
+            data_store=current_app.original_data_store,
+            company_id=company_id
+        )
+        request.naitve_interface = ModelInterfaceWrapper(
+            model_interface=current_app.original_model_interface,
+            company_id=company_id
+        )
 
     port = config['api']['http']['port']
     host = config['api']['http']['host']
@@ -106,6 +121,6 @@ def start(verbose, no_studio):
 
         options = {
             'bind': f'{host}:{port}',
-            'workers': min(max(multiprocessing.cpu_count(), 2), 3)
+            'workers': min(max(mp.cpu_count(), 2), 3)
         }
         StandaloneApplication(app, options).run()

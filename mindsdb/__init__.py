@@ -3,7 +3,7 @@ import sys
 import json
 
 from mindsdb.__about__ import __package_name__ as name, __version__   # noqa
-from mindsdb.utilities.fs import get_or_create_dir_struct, create_dirs_recursive
+from mindsdb.utilities.fs import get_or_create_data_dir, create_dirs_recursive
 from mindsdb.utilities.functions import args_parse, is_notebook
 from mindsdb.__about__ import __version__ as mindsdb_version
 from mindsdb.utilities.telemetry import telemetry_file_exists, disable_telemetry
@@ -64,7 +64,7 @@ if not is_ray_worker:
     elif os.environ.get('MINDSDB_STORAGE_DIR') is not None:
         root_storage_dir = os.environ['MINDSDB_STORAGE_DIR']
     else:
-        _, root_storage_dir = get_or_create_dir_struct()
+        root_storage_dir = get_or_create_data_dir()
         os.environ['MINDSDB_STORAGE_DIR'] = root_storage_dir
 
     if os.path.isdir(root_storage_dir) is False:
@@ -74,9 +74,6 @@ if not is_ray_worker:
         os.environ['MINDSDB_DB_CON'] = user_config['storage_db']
     elif os.environ.get('MINDSDB_DB_CON', '') == '':
         os.environ['MINDSDB_DB_CON'] = 'sqlite:///' + os.path.join(os.environ['MINDSDB_STORAGE_DIR'], 'mindsdb.sqlite3.db') + '?check_same_thread=False&timeout=30'
-
-    if 'company_id' in user_config:
-        os.environ['MINDSDB_COMPANY_ID'] = user_config['company_id']
 
     from mindsdb.utilities.config import Config
     mindsdb_config = Config()

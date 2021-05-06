@@ -15,16 +15,15 @@ from mindsdb.interfaces.storage.fs import FsSotre
 
 
 class CustomModels():
-    def __init__(self):
+    def __init__(self, company_id=None):
         self.config = Config()
         self.fs_store = FsSotre()
-        self.company_id = os.environ.get('MINDSDB_COMPANY_ID', None)
-        self.dbw = DatabaseWrapper()
+        self.company_id = company_id
+        self.dbw = DatabaseWrapper(None)
         self.storage_dir = self.config['paths']['custom_models']
         os.makedirs(self.storage_dir, exist_ok=True)
         self.model_cache = {}
         self.mindsdb_native = NativeInterface()
-        self.dbw = DatabaseWrapper()
 
     def _dir(self, name):
         return str(os.path.join(self.storage_dir, name))
@@ -137,7 +136,6 @@ class CustomModels():
             models.append(self.get_model_data(name))
 
         return models
-
 
     def delete_model(self, name):
         Predictor.query.filter_by(company_id=self.company_id, name=name, is_custom=True).delete()

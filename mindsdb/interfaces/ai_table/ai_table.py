@@ -1,27 +1,10 @@
-import json
-import datetime
-import shutil
-import os
-import pickle
-
-import pandas as pd
-
-from mindsdb.interfaces.model.model_interface import ModelInterface as NativeInterface
-from mindsdb_datasources import FileDS, ClickhouseDS, MariaDS, MySqlDS, PostgresDS, MSSQLDS, MongoDS, SnowflakeDS
-from mindsdb.utilities.config import Config
-from mindsdb.interfaces.storage.db import session, Datasource, AITable
-from mindsdb.interfaces.storage.fs import FsSotre
+from mindsdb.interfaces.storage.db import session, AITable
 from mindsdb.utilities.log import log
 
 
-class AITable_store():
-    def __init__(self):
-        self.config = Config()
-
-        self.fs_store = FsSotre()
-        self.company_id = os.environ.get('MINDSDB_COMPANY_ID', None)
-        self.dir = self.config.paths['datasources']
-        self.mindsdb_native = NativeInterface()
+class AITableStore():
+    def __init__(self, company_id=None):
+        self.company_id = company_id
 
     def is_ai_table(self, name):
         record = self.get_ai_table(name.lower())
@@ -46,7 +29,8 @@ class AITable_store():
             integration_query=integration_query,
             query_fields=query_fields,
             predictor_name=predictor_name,
-            predictor_columns=predictor_fields
+            predictor_columns=predictor_fields,
+            company_id=self.company_id
         )
         session.add(ai_table_record)
         session.commit()

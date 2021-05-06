@@ -47,17 +47,19 @@ class HTTPTest(unittest.TestCase):
         res = res.json()
         assert isinstance(res['integrations'], list)
 
-        test_integration_data = {'publish': False, 'host': 'test', 'type': 'clickhouse', 'port': 8123, 'user': 'default'}
+        test_integration_data = {'publish': False, 'host': 'test', 'type': 'clickhouse', 'port': 8123, 'user': 'default', 'password': '123'}
         res = requests.put(f'{root}/config/integrations/test_integration', json={'params': test_integration_data})
         assert res.status_code == 200
 
         res = requests.get(f'{root}/config/integrations/test_integration')
         assert res.status_code == 200
         test_integration = res.json()
+        print(test_integration)
         assert len(test_integration) == 8
 
         for k in test_integration_data:
-            assert test_integration[k] == test_integration_data[k]
+            if k != 'password':
+                assert test_integration[k] == test_integration_data[k]
 
         for name in ['test_integration']:
             # Get the original
@@ -68,7 +70,7 @@ class HTTPTest(unittest.TestCase):
             for k in ['publish', 'host', 'port', 'type', 'user']:
                 assert k in integration
                 assert integration[k] is not None
-            assert integration['password'] is None
+            assert integration.get('password') is None
 
             # Modify it
             res = requests.post(
@@ -152,8 +154,8 @@ class HTTPTest(unittest.TestCase):
         }
         url = f'{root}/predictors/{pred_name}/predict'
         res = requests.post(url, json=params)
-        assert isinstance(res.json()[0]['rental_price']['predicted_value'], float)
         assert res.status_code == 200
+        assert isinstance(res.json()[0]['rental_price']['predicted_value'], float)
 
     def test_4_datasources(self):
         """
@@ -208,7 +210,7 @@ class HTTPTest(unittest.TestCase):
         assert response.status_code == 200
         assert response.content.decode().find('<head>') > 0
 
-    def test_10_ds_from_unexist_integration(self):
+    def test__10_ds_from_unexist_integration(self):
         """
         Call telemetry enabled
         then check the response is status 200

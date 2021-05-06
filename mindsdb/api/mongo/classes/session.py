@@ -1,12 +1,13 @@
 import base64
 
 from mindsdb.api.mongo.classes.scram import Scram
-from mindsdb.utilities.config import Config
 
 
 class Session():
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, server_mindsdb_env):
+        self.config = server_mindsdb_env['config']
+        self.mindsdb_env = {'company_id': None}
+        self.mindsdb_env.update(server_mindsdb_env)
 
     def init_scram(self, method):
         self.scram = Scram(method=method, get_salted_password=self.get_salted_password)

@@ -31,9 +31,9 @@ class MSSQLConnectionChecker:
 
 
 class MSSQL(Integration, MSSQLConnectionChecker):
-    def __init__(self, config, name):
+    def __init__(self, config, name, db_info):
         super().__init__(config, name)
-        db_info = self.config['integrations'][self.name]
+        self.db_info = db_info
         self.user = db_info.get('user')
         self.password = db_info.get('password', None)
         self.host = db_info.get('host')
@@ -51,7 +51,7 @@ class MSSQL(Integration, MSSQLConnectionChecker):
         return res
 
     def setup(self):
-        integration = self.config['integrations'][self.name]
+        integration = self.db_info
         driver_name = integration.get('odbc_driver_name', 'MySQL ODBC 8.0 Unicode Driver')
         servers = self._query('exec sp_linkedservers;', fetch=True)
         servers = [x['SRV_NAME'] for x in servers]

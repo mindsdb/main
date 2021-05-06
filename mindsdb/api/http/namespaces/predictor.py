@@ -19,10 +19,6 @@ from mindsdb.api.http.namespaces.entitites.predictor_metadata import (
 )
 from mindsdb.api.http.namespaces.entitites.predictor_status import predictor_status
 
-def is_custom(name):
-    if name in [x['name'] for x in ca.custom_models.get_models()]:
-        return True
-    return False
 
 @ns_conf.route('/')
 class PredictorList(Resource):
@@ -30,8 +26,7 @@ class PredictorList(Resource):
     @ns_conf.marshal_list_with(predictor_status, skip_none=True)
     def get(self):
         '''List all predictors'''
-
-        return [*ca.naitve_interface.get_models(),*ca.custom_models.get_models()]
+        return request.naitve_interface.get_models()
 
 @ns_conf.route('/custom/<name>')
 @ns_conf.param('name', 'The predictor identifier')
@@ -49,7 +44,7 @@ class CustomPredictor(Resource):
         with open(fpath, 'wb') as f:
             f.write(predictor_file.read())
 
-        ca.custom_models.load_model(fpath, name, trained_status)
+        request.custom_models.load_model(fpath, name, trained_status)
 
         return f'Uploaded custom model {name}'
 
@@ -61,10 +56,7 @@ class Predictor(Resource):
     @ns_conf.marshal_with(predictor_metadata, skip_none=True)
     def get(self, name):
         try:
-            if is_custom(name):
-                model = ca.custom_models.get_model_data(name)
-            else:
-                model = ca.naitve_interface.get_model_data(name, db_fix=False)
+            model = request.naitve_interface.get_model_data(name, db_fix=False)
         except Exception as e:
             abort(404, "")
 
@@ -77,10 +69,7 @@ class Predictor(Resource):
     @ns_conf.doc('delete_predictor')
     def delete(self, name):
         '''Remove predictor'''
-        if is_custom(name):
-            ca.custom_models.delete_model(name)
-        else:
-            ca.naitve_interface.delete_model(name)
+        request.naitve_interface.delete_model(name)
 
         return '', 200
 
@@ -117,7 +106,7 @@ class Predictor(Resource):
             retrain = None
 
         ds_name = data.get('data_source_name') if data.get('data_source_name') is not None else data.get('from_data')
-        from_data = ca.default_store.get_datasource_obj(ds_name, raw=True)
+        from_data = request.default_store.get_datasource_obj(ds_name, raw=True)
 
         if from_data is None:
             return {'message': f'Can not find datasource: {ds_name}'}, 400
@@ -126,19 +115,19 @@ class Predictor(Resource):
             original_name = name
             name = name + '_retrained'
 
-        ca.naitve_interface.learn(name, from_data, to_predict, ca.default_store.get_datasource(ds_name)['id'], kwargs)
+        request.naitve_interface.learn(name, from_data, to_predict, request.default_store.get_datasource(ds_name)['id'], kwargs=kwargs)
         for i in range(20):
             try:
                 # Dirty hack, we should use a messaging queue between the predictor process and this bit of the code
-                ca.naitve_interface.get_model_data(name)
+                request.naitve_interface.get_model_data(name)
                 break
             except Exception:
                 time.sleep(1)
 
         if retrain is True:
             try:
-                ca.naitve_interface.delete_model(original_name)
-                ca.naitve_interface.rename_model(name, original_name)
+                request.naitve_interface.delete_model(original_name)
+                request.naitve_interface.rename_model(name, original_name)
             except Exception:
                 pass
 
@@ -158,11 +147,10 @@ class PredictorLearn(Resource):
         if 'advanced_args' not in kwargs:
             kwargs['advanced_args'] = {}
 
-
         ds_name = data.get('data_source_name') if data.get('data_source_name') is not None else data.get('from_data')
-        from_data = ca.default_store.get_datasource_obj(ds_name, raw=True)
+        from_data = request.default_store.get_datasource_obj(ds_name, raw=True)
 
-        ca.custom_models.learn(name, from_data, to_predict, ca.default_store.get_datasource(ds_name)['id'], kwargs)
+        request.custom_models.learn(name, from_data, to_predict, request.default_store.get_datasource(ds_name)['id'], kwargs)
 
         return '', 200
 
@@ -172,14 +160,15 @@ class PredictorLearn(Resource):
 class PredictorPredict(Resource):
     @ns_conf.doc('Update predictor')
     def get(self, name):
-        msg = ca.naitve_interface.update_model(name)
+        msg = request.naitve_interface.update_model(name)
         return {
             'message': msg
         }
 
+
 @ns_conf.route('/<name>/predict')
 @ns_conf.param('name', 'The predictor identifier')
-class PredictorPredict(Resource):
+class PredictorPredict2(Resource):
     @ns_conf.doc('post_predictor_predict', params=predictor_query_params)
     def post(self, name):
         '''Queries predictor'''
@@ -191,10 +180,7 @@ class PredictorPredict(Resource):
         if when is None:
             return 'No data provided for the predictions', 500
 
-        if is_custom(name):
-            return ca.custom_models.predict(name, when_data=when, **kwargs)
-        else:
-            results = ca.naitve_interface.predict(name, format_flag, when_data=when, **kwargs)
+        results = request.naitve_interface.predict(name, format_flag, when_data=when, **kwargs)
 
         return results
 
@@ -209,17 +195,12 @@ class PredictorPredictFromDataSource(Resource):
         kwargs = data.get('kwargs', {})
 
         use_raw = False
-        if is_custom(name):
-            use_raw = True
 
-        from_data = ca.default_store.get_datasource_obj(data.get('data_source_name'), raw=use_raw)
+        from_data = request.default_store.get_datasource_obj(data.get('data_source_name'), raw=use_raw)
         if from_data is None:
             abort(400, 'No valid datasource given')
 
-        if is_custom(name):
-            return ca.custom_models.predict(name, from_data=from_data, **kwargs)
-
-        results = ca.naitve_interface.predict(name, format_flag, when_data=from_data, **kwargs)
+        results = request.naitve_interface.predict(name, format_flag, when_data=from_data, **kwargs)
         return results
 
 @ns_conf.route('/<name>/rename')
@@ -230,10 +211,7 @@ class PredictorDownload(Resource):
         '''Export predictor to file'''
         try:
             new_name = request.args.get('new_name')
-            if is_custom(name):
-                ca.custom_models.rename_model(name, new_name)
-            else:
-                ca.naitve_interface.rename_model(name, new_name)
+            request.naitve_interface.rename_model(name, new_name)
         except Exception as e:
             return str(e), 400
 

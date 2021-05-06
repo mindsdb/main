@@ -14,8 +14,8 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - id: set-matrix
-        uses: JoshuaTheMiller/conditional-build-matrix@0.0.1      
-        with:          
+        uses: JoshuaTheMiller/conditional-build-matrix@0.0.1
+        with:
           filter: '[?runOn==`${{ github.ref }}` || runOn==`always`]'
   test:
     needs: matrix_prep
@@ -71,6 +71,10 @@ jobs:
           sudo chmod 644 ~/.mindsdb_credentials.json
 
           export USE_EXTERNAL_DB_SERVER="1"
+
+          # Company independent
+          echo -e "\n===============\ntest company independent\n===============\n"
+          python tests/integration_tests/flows/test_company_independent.py
 
           # HTTP
           echo -e "\n===============\ntest HTTP\n===============\n"

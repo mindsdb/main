@@ -2,13 +2,13 @@ import os
 from mindsdb.api.mongo.classes import Responder
 from mindsdb.interfaces.storage.db import session, Datasource
 import mindsdb.api.mongo.functions as helpers
+from mindsdb.interfaces.database.integrations import get_db_integrations
 
 
 class Responce(Responder):
     when = {'insert': helpers.is_true}
 
     def result(self, query, request_env, mindsdb_env, session):
-        self.company_id = os.environ.get('MINDSDB_COMPANY_ID', None)
         try:
             res = self._result(query, request_env, mindsdb_env)
         except Exception as e:
@@ -72,7 +72,7 @@ class Responce(Responder):
             kwargs = doc.get('training_options', {})
 
             if is_select_data_query:
-                integrations = mindsdb_env['config']['integrations'].keys()
+                integrations = get_db_integrations(mindsdb_env['company_id']).keys()
                 connection = doc.get('connection')
                 if connection is None:
                     if 'default_mongodb' in integrations:
@@ -105,8 +105,14 @@ class Responce(Responder):
                         mindsdb_env['data_store'].delete_datasource(ds_name)
                     raise Exception(f"Column '{col}' not exists")
 
-            datasource_record = session.query(Datasource).filter_by(company_id=self.company_id, name=ds_name).first()
-            mindsdb_env['mindsdb_native'].learn(doc['name'], mindsdb_env['data_store'].get_datasource_obj(ds_name, raw=True), predict, datasource_record.id, dict(kwargs))
+            datasource_record = session.query(Datasource).filter_by(company_id=mindsdb_env['company_id'], name=ds_name).first()
+            mindsdb_env['mindsdb_native'].learn(
+                doc['name'],
+                mindsdb_env['data_store'].get_datasource_obj(ds_name, raw=True),
+                predict,
+                datasource_record.id,
+                kwargs=dict(kwargs)
+            )
 
         result = {
             "n": len(query['documents']),

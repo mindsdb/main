@@ -35,9 +35,8 @@ class PostgreSQLConnectionChecker:
 
 
 class PostgreSQL(Integration, PostgreSQLConnectionChecker):
-    def __init__(self, config, name):
+    def __init__(self, config, name, db_info):
         super().__init__(config, name)
-        db_info = self.config['integrations'][self.name]
         self.user = db_info.get('user')
         self.password = db_info.get('password')
         self.host = db_info.get('host')
@@ -118,7 +117,7 @@ class PostgreSQL(Integration, PostgreSQLConnectionChecker):
 
         self._query(f'DROP SCHEMA IF EXISTS {self.mindsdb_database} CASCADE')
 
-        self._query(f"DROP USER MAPPING IF EXISTS FOR {self.config['integrations'][self.name]['user']} SERVER server_{self.mindsdb_database}")
+        self._query(f"DROP USER MAPPING IF EXISTS FOR {self.user} SERVER server_{self.mindsdb_database}")
 
         self._query(f'DROP SERVER IF EXISTS server_{self.mindsdb_database} CASCADE')
 
@@ -129,7 +128,7 @@ class PostgreSQL(Integration, PostgreSQLConnectionChecker):
         ''')
 
         self._query(f'''
-           CREATE USER MAPPING FOR {self.config['integrations'][self.name]['user']}
+           CREATE USER MAPPING FOR {self.user}
                 SERVER server_{self.mindsdb_database}
                 OPTIONS (username '{user}', password '{password}');
         ''')

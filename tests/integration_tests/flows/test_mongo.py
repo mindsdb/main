@@ -48,7 +48,7 @@ class MongoTest(unittest.TestCase):
                         'publish': True
                     }
                 }, 'permanent_storage': {
-                    'location': 's3'
+                    'location': 'local'
                 }
             }
         )

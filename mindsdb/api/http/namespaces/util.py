@@ -17,6 +17,7 @@ from mindsdb.utilities.telemetry import (
 )
 
 
+
 @ns_conf.route('/ping')
 class Ping(Resource):
     @ns_conf.doc('get_ping')

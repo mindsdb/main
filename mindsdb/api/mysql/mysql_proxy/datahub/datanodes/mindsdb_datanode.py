@@ -1,10 +1,7 @@
 import json
-import pandas
-import time
+import numpy as np
 
 from mindsdb.api.mysql.mysql_proxy.datahub.datanodes.datanode import DataNode
-from mindsdb.interfaces.model.model_interface import ModelInterface as NativeInterface
-from mindsdb.interfaces.custom.custom_models import CustomModels
 from mindsdb.integrations.clickhouse.clickhouse import Clickhouse
 from mindsdb.integrations.postgres.postgres import PostgreSQL
 from mindsdb.integrations.mariadb.mariadb import Mariadb
@@ -12,9 +9,7 @@ from mindsdb.integrations.mysql.mysql import MySQL
 from mindsdb.integrations.mssql.mssql import MSSQL
 from mindsdb.utilities.functions import cast_row_types
 from mindsdb.utilities.config import Config
-from mindsdb.interfaces.ai_table.ai_table import AITable_store
-from mindsdb.interfaces.datastore.datastore import DataStore
-
+from mindsdb.interfaces.database.integrations import get_db_integration
 
 
 class NumpyJSONEncoder(json.JSONEncoder):
@@ -34,18 +29,20 @@ class NumpyJSONEncoder(json.JSONEncoder):
         else:
             return super().default(obj)
 
+
 class MindsDBDataNode(DataNode):
     type = 'mindsdb'
 
-    def __init__(self, config):
+    def __init__(self, model_interface, custom_models, ai_table, data_store, company_id):
         self.config = Config()
-        self.mindsdb_native = NativeInterface()
-        self.custom_models = CustomModels()
-        self.ai_table = AITable_store()
-        self.default_store = DataStore()
+        self.company_id = company_id
+        self.model_interface = model_interface
+        self.custom_models = custom_models
+        self.ai_table = ai_table
+        self.data_store = data_store
 
     def getTables(self):
-        models = self.mindsdb_native.get_models()
+        models = self.model_interface.get_models()
         models = [x['name'] for x in models if x['status'] == 'complete']
         models += ['predictors', 'commands']
         models += [x['name'] for x in self.custom_models.get_models()]
@@ -65,7 +62,7 @@ class MindsDBDataNode(DataNode):
         return columns
 
     def _get_model_columns(self, table_name):
-        model = self.mindsdb_native.get_model_data(name=table_name)
+        model = self.model_interface.get_model_data(name=table_name)
         columns = []
         columns += model['columns']
         columns += [f'{x}_original' for x in model['predict']]
@@ -94,14 +91,14 @@ class MindsDBDataNode(DataNode):
         ai_tables = self.ai_table.get_ai_table(table)
         if ai_tables is not None:
             columns = self._get_ai_table_columns(table)
-        elif table in [x['name'] for x in self.mindsdb_native.get_models()]:
+        elif table in [x['name'] for x in self.model_interface.get_models()]:
             columns = self._get_model_columns(table)
             columns += ['when_data', 'select_data_query', 'external_datasource']
 
         return columns
 
     def _select_predictors(self):
-        models = self.mindsdb_native.get_models()
+        models = self.model_interface.get_models()
         # TODO add custom models
         return [{
             'name': x['name'],
@@ -114,7 +111,7 @@ class MindsDBDataNode(DataNode):
         } for x in models]
 
     def delete_predictor(self, name):
-        self.mindsdb_native.delete_model(name)
+        self.model_interface.delete_model(name)
 
     def _select_from_ai_table(self, table, columns, where):
         aitable_record = self.ai_table.get_ai_table(table)
@@ -122,10 +119,10 @@ class MindsDBDataNode(DataNode):
         query = aitable_record.integration_query
         predictor_name = aitable_record.predictor_name
 
-        ds, ds_name = self.default_store.save_datasource('temp_ds', integration, {'query': query})
-        dso = self.default_store.get_datasource_obj(ds_name, raw=True)
-        res = self.mindsdb_native.predict(predictor_name, 'dict', when_data=dso)
-        self.default_store.delete_datasource(ds_name)
+        ds, ds_name = self.data_store.save_datasource('temp_ds', integration, {'query': query})
+        dso = self.data_store.get_datasource_obj(ds_name, raw=True)
+        res = self.model_interface.predict(predictor_name, 'dict', when_data=dso)
+        self.data_store.delete_datasource(ds_name)
 
         keys_map = {}
         for f in aitable_record.predictor_columns:
@@ -171,22 +168,23 @@ class MindsDBDataNode(DataNode):
             select_data_query = where['select_data_query']['$eq']
             del where['select_data_query']
 
-            dbtype = self.config['integrations'][came_from]['type']
+            integration_data = get_db_integration(came_from, self.company_id)
+            dbtype = integration_data['type']
             if dbtype == 'clickhouse':
-                ch = Clickhouse(self.config, came_from)
+                ch = Clickhouse(self.config, came_from, integration_data)
                 res = ch._query(select_data_query.strip(' ;\n') + ' FORMAT JSON')
                 data = res.json()['data']
             elif dbtype == 'mariadb':
-                maria = Mariadb(self.config, came_from)
+                maria = Mariadb(self.config, came_from, integration_data)
                 data = maria._query(select_data_query)
             elif dbtype == 'mysql':
-                mysql = MySQL(self.config, came_from)
+                mysql = MySQL(self.config, came_from, integration_data)
                 data = mysql._query(select_data_query)
             elif dbtype == 'postgres':
-                mysql = PostgreSQL(self.config, came_from)
+                mysql = PostgreSQL(self.config, came_from, integration_data)
                 data = mysql._query(select_data_query)
             elif dbtype == 'mssql':
-                mssql = MSSQL(self.config, came_from)
+                mssql = MSSQL(self.config, came_from, integration_data)
                 data = mssql._query(select_data_query, fetch=True)
             else:
                 raise Exception(f'Unknown database type: {dbtype}')
@@ -212,7 +210,7 @@ class MindsDBDataNode(DataNode):
         try:
             model = self.custom_models.get_model_data(name=table)
         except Exception:
-            model = self.mindsdb_native.get_model_data(name=table)
+            model = self.model_interface.get_model_data(name=table)
 
         predicted_columns = model['predict']
 
@@ -239,7 +237,7 @@ class MindsDBDataNode(DataNode):
 
                 for key in ele:
                     row[key] = ele[key]['predicted_value']
-                    # FIXME prefer get int from mindsdb_native in this case
+                    # FIXME prefer get int from model_interface in this case
                     if model['data_analysis_v2'][key]['typing']['data_subtype'] == 'Int':
                         row[key] = int(row[key])
 
@@ -266,7 +264,7 @@ class MindsDBDataNode(DataNode):
 
             return data
         else:
-            pred_dicts, explanations = self.mindsdb_native.predict(table, 'dict&explain',when_data=where_data)
+            pred_dicts, explanations = self.model_interface.predict(table, 'dict&explain', when_data=where_data)
 
             keys = [x for x in pred_dicts[0] if x in columns]
             min_max_keys = []

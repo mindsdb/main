@@ -28,9 +28,8 @@ class MariadbConnectionChecker:
 
 
 class Mariadb(Integration, MariadbConnectionChecker):
-    def __init__(self, config, name):
+    def __init__(self, config, name, db_info):
         super().__init__(config, name)
-        db_info = self.config['integrations'][self.name]
         self.user = db_info.get('user', 'default')
         self.password = db_info.get('password', None)
         self.host = db_info.get('host')
@@ -72,10 +71,10 @@ class Mariadb(Integration, MariadbConnectionChecker):
 
     def _query(self, query):
         con = mysql.connector.connect(
-            host=self.config['integrations'][self.name]['host'],
-            port=self.config['integrations'][self.name]['port'],
-            user=self.config['integrations'][self.name]['user'],
-            password=self.config['integrations'][self.name]['password']
+            host=self.host,
+            port=self.port,
+            user=self.user,
+            password=self.password
         )
 
         cur = con.cursor(dictionary=True, buffered=True)

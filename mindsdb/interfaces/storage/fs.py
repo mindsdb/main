@@ -43,6 +43,7 @@ class FsSotre():
             local_ziped_name = f'{filename}.tar.gz'
             self.s3.download_file(self.bucket, remote_ziped_name, os.path.join(local_path, local_ziped_name))
             shutil.unpack_archive(os.path.join(local_path, local_ziped_name), local_path)
+            os.system(f'chmod -R 777 {local_path}')
 
     def delete(self, remote_name):
         if self.location == 'local':

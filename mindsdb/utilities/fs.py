@@ -2,6 +2,7 @@ import inspect
 import os
 from pathlib import Path
 import tempfile
+from appdirs import user_data_dir
 
 
 def create_directory(path):
@@ -9,67 +10,25 @@ def create_directory(path):
     path.mkdir(mode=0o777, exist_ok=True, parents=True)
 
 
-def get_paths():
-    this_file_path = os.path.abspath(inspect.getfile(inspect.currentframe()))
-    mindsdb_path = os.path.abspath(Path(this_file_path).parent.parent)
-
-    tuples = [
-        (
-            f'{mindsdb_path}/etc/',
-            f'{mindsdb_path}/var/'
-        )
-    ]
-
-    # if windows
-    if os.name == 'nt':
-        tuples.extend([
-            (
-                os.path.join(os.environ['APPDATA'], 'mindsdb'),
-                os.path.join(os.environ['APPDATA'], 'mindsdb'),
-            )
-        ])
-    else:
-        tuples.extend([
-            (
-                '/etc/mindsdb',
-                '/var/lib/mindsdb'
-            ),
-            (
-                '{}/.local/etc/mindsdb'.format(Path.home()),
-                '{}/.local/var/lib/mindsdb'.format(Path.home())
-            )
-        ])
-
-    return tuples
+def get_root_path():
+    mindsdb_path = user_data_dir('mindsdb', 'mindsdb')
+    return os.path.join(mindsdb_path, 'var/')
 
 
-def get_or_create_dir_struct():
-    for tup in get_paths():
-        try:
-            for _dir in tup:
-                assert os.path.exists(_dir)
-                assert os.access(_dir, os.W_OK) is True
+def get_or_create_data_dir():
+    data_dir = user_data_dir('mindsdb', 'mindsdb')
+    mindsdb_data_dir = os.path.join(data_dir, 'var/')
 
-            config_dir = tup[0]
+    if os.path.exists(mindsdb_data_dir) is False:
+        create_directory(mindsdb_data_dir)
 
-            return config_dir, tup[1]
-        except Exception:
-            pass
+    try:
+        assert os.path.exists(mindsdb_data_dir)
+        assert os.access(mindsdb_data_dir, os.W_OK) is True
+    except Exception:
+        raise Exception('MindsDB storage directory does not exist and could not be created')
 
-    for tup in get_paths():
-        try:
-            for _dir in tup:
-                create_directory(_dir)
-                assert os.access(_dir, os.W_OK) is True
-
-            config_dir = tup[0]
-
-            return config_dir, tup[1]
-
-        except Exception:
-            pass
-
-    raise Exception('MindsDB storage directory does not exist and could not be created')
+    return mindsdb_data_dir
 
 
 def create_dirs_recursive(path):

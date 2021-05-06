@@ -9,14 +9,13 @@ from mindsdb.interfaces.storage.db import session
 from mindsdb.interfaces.storage.db import Stream as StreamDB
 from mindsdb.streams.base.base_stream import StreamTypes
 
-COMPANY_ID = os.environ.get('MINDSDB_COMPANY_ID', None)
 
 def get_integration(name):
     integrations = ca.config_obj.get('integrations', {})
     return integrations.get(name, {})
 
 def get_predictors():
-    full_predictors_list = [*ca.naitve_interface.get_models(),*ca.custom_models.get_models()]
+    full_predictors_list = [*request.naitve_interface.get_models(),*request.custom_models.get_models()]
     return [x["name"] for x in full_predictors_list
             if x["status"] == "complete" and x["current_phase"] == 'Trained']
 
@@ -81,8 +80,7 @@ class Stream(Resource):
             abort(400, f"requested predictor '{predictor}' is not ready or doens't exist")
         stream = StreamDB(_type=_type, name=name, connection_params=connection_params, advanced_params=advanced_params,
                           predictor=predictor, stream_in=stream_in, stream_out=stream_out,
-                          integration=integration_name, company_id=COMPANY_ID,
-                          stream_anomaly=stream_anomaly)
+                          integration=integration_name, company_id=request.company_id, stream_anomaly=stream_anomaly)
 
         session.add(stream)
         session.commit()
@@ -91,7 +89,7 @@ class Stream(Resource):
     @ns_conf.doc("delete_stream")
     def delete(self, name):
         try:
-            session.query(StreamDB).filter_by(company_id=COMPANY_ID, name=name).delete()
+            session.query(StreamDB).filter_by(company_id=request.company_id, name=name).delete()
             session.commit()
         except Exception as e:
             log.error(e)

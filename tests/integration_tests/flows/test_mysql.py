@@ -99,7 +99,7 @@ class MySQLDBTest(unittest.TestCase):
 
         mindsdb_tables = self.get_tables_in(MINDSDB_DATABASE)
 
-        self.assertTrue(len(mindsdb_tables) == 2)
+        self.assertTrue(len(mindsdb_tables) >= 2)
         self.assertTrue('predictors' in mindsdb_tables)
         self.assertTrue('commands' in mindsdb_tables)
 

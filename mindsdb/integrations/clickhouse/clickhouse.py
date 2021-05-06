@@ -24,9 +24,8 @@ class ClickhouseConnectionChecker:
 
 
 class Clickhouse(Integration, ClickhouseConnectionChecker):
-    def __init__(self, config, name):
+    def __init__(self, config, name, db_info):
         super().__init__(config, name)
-        db_info = self.config['integrations'][self.name]
         self.user = db_info.get('user', 'default')
         self.password = db_info.get('password', None)
         self.host = db_info.get('host')
@@ -64,19 +63,13 @@ class Clickhouse(Integration, ClickhouseConnectionChecker):
         return column_declaration
 
     def _query(self, query):
-        params = {'user': 'default'}
-        try:
-            params['user'] = self.config['integrations'][self.name]['user']
-        except Exception:
-            pass
+        params = {'user': self.user}
 
-        try:
-            params['password'] = self.config['integrations'][self.name]['password']
-        except Exception:
-            pass
+        if self.password is not None:
+            params['password'] = self.password
 
-        host = self.config['integrations'][self.name]['host']
-        port = self.config['integrations'][self.name]['port']
+        host = self.host
+        port = self.port
 
         response = requests.post(f'http://{host}:{port}', data=query, params=params)
 

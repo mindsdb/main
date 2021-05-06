@@ -237,7 +237,7 @@ class MongoRequestHandler(SocketServer.BaseRequestHandler):
         log.debug('connect')
         log.debug(str(self.server.socket))
 
-        self.session = Session(self.server.mindsdb_env['config'])
+        self.session = Session(self.server.mindsdb_env)
 
         first_byte = self.request.recv(1, socket.MSG_PEEK)
         if first_byte == b'\x16':
@@ -264,7 +264,7 @@ class MongoRequestHandler(SocketServer.BaseRequestHandler):
             raise NotImplementedError(f'Unknown opcode {opcode}')
         responder = self.server.operationsHandlersMap[opcode]
         assert responder is not None, 'error'
-        response = responder.handle(msg_bytes, request_id, self.server.mindsdb_env, self.session)
+        response = responder.handle(msg_bytes, request_id, self.session.mindsdb_env, self.session)
         if response is None:
             return None
         return responder.to_bytes(response, request_id)

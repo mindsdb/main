@@ -4,14 +4,17 @@ import time
 from common import HTTP_API_ROOT
 
 
-def get_predictors_list():
-    res = requests.get(f'{HTTP_API_ROOT}/predictors/')
+def get_predictors_list(company_id=None):
+    headers = {}
+    if company_id is not None:
+        headers['company-id'] = f'{company_id}'
+    res = requests.get(f'{HTTP_API_ROOT}/predictors/', headers=headers)
     assert res.status_code == 200
     return res.json()
 
 
-def get_predictors_names_list():
-    predictors = get_predictors_list()
+def get_predictors_names_list(company_id=None):
+    predictors = get_predictors_list(company_id=company_id)
     return [x['name'] for x in predictors]
 
 
@@ -29,6 +32,15 @@ def get_predictor_data(name):
         if p['name'] == name:
             return p
     return None
+
+
+def get_datasources_names(company_id=None):
+    headers = {}
+    if company_id is not None:
+        headers['company-id'] = f'{company_id}'
+    res = requests.get(f'{HTTP_API_ROOT}/datasources', headers=headers)
+    assert res.status_code == 200
+    return [x['name'] for x in res.json()]
 
 
 def check_ds_not_exists(ds_name):
@@ -63,3 +75,12 @@ def wait_predictor_learn(predictor_name):
         learn_done = get_predictor_data(predictor_name)['status'] == 'complete'
         time.sleep(1)
     assert learn_done
+
+
+def get_integrations_names(company_id=None):
+    headers = {}
+    if company_id is not None:
+        headers['company-id'] = f'{company_id}'
+    res = requests.get(f'{HTTP_API_ROOT}/config/integrations', headers=headers)
+    assert res.status_code == 200
+    return res.json()['integrations']

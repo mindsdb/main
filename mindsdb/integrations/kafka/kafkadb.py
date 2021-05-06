@@ -1,13 +1,12 @@
-import os
 import json
 import kafka
 
 from threading import Thread
-from mindsdb.utilities.config import STOP_THREADS_EVENT
 from mindsdb.integrations.base import StreamIntegration
 from mindsdb.streams.kafka.kafka_stream import KafkaStream
-from mindsdb.streams.base.base_stream import StreamTypes
-from mindsdb.interfaces.storage.db import session, Stream, Configuration
+from mindsdb.interfaces.storage.db import session, Stream
+from mindsdb.interfaces.database.integrations import get_db_integration
+
 
 class KafkaConnectionChecker:
     def __init__(self, **kwargs):
@@ -31,7 +30,7 @@ class KafkaConnectionChecker:
 class Kafka(StreamIntegration, KafkaConnectionChecker):
     def __init__(self, config, name):
         StreamIntegration.__init__(self, config, name)
-        integration_info = self.config['integrations'][self.name]
+        integration_info = get_db_integration(self.name, self.company_id)
         self.connection_info = integration_info.get('connection')
         self.advanced_info = integration_info.get('advanced', {})
         self.advanced_common = self.advanced_info.get('common', {})

@@ -50,9 +50,8 @@ class MongoConnectionChecker:
 
 
 class MongoDB(Integration, MongoConnectionChecker):
-    def __init__(self, config, name):
+    def __init__(self, config, name, db_info):
         super().__init__(config, name)
-        db_info = self.config['integrations'][self.name]
         self.user = db_info.get('user', 'default')
         self.password = db_info.get('password', None)
         self.host = db_info.get('host')

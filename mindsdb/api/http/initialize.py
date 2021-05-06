@@ -8,7 +8,7 @@ from zipfile import ZipFile
 from pathlib import Path
 import traceback
 from datetime import datetime, date, timedelta
-#import concurrent.futures
+# import concurrent.futures
 
 from flask import Flask, url_for, make_response
 from flask.json import dumps
@@ -17,10 +17,9 @@ from flask.json import JSONEncoder
 
 from mindsdb.__about__ import __version__ as mindsdb_version
 from mindsdb.interfaces.datastore.datastore import DataStore
-from mindsdb.interfaces.model.model_interface import ModelInterface as NativeInterface
+from mindsdb.interfaces.model.model_interface import ModelInterface
 from mindsdb.interfaces.custom.custom_models import CustomModels
 from mindsdb.utilities.ps import is_pid_listen_port, wait_func_is_true
-from mindsdb.interfaces.database.database import DatabaseWrapper
 from mindsdb.utilities.telemetry import inject_telemetry_to_static
 from mindsdb.utilities.config import Config
 from mindsdb.utilities.log import get_log
@@ -61,7 +60,7 @@ def initialize_static(config):
         Current GUI version stored in static/version.txt.
     '''
     log = get_log('http')
-    static_path = Path(config.paths['static'])
+    static_path = Path(config['paths']['static'])
     static_path.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -227,7 +226,7 @@ def initialize_flask(config, init_static_thread, no_studio):
             __name__
         )
     else:
-        static_path = os.path.join(config.paths['static'], 'static/')
+        static_path = os.path.join(config['paths']['static'], 'static/')
         if os.path.isabs(static_path) is False:
             static_path = os.path.join(os.getcwd(), static_path)
         app = Flask(
@@ -272,17 +271,16 @@ def initialize_flask(config, init_static_thread, no_studio):
         log.info(f' - GUI available at {url}')
 
         pid = os.getpid()
-        x = threading.Thread(target=_open_webbrowser, args=(url, pid, port, init_static_thread, config.paths['static']), daemon=True)
+        x = threading.Thread(target=_open_webbrowser, args=(url, pid, port, init_static_thread, config['paths']['static']), daemon=True)
         x.start()
 
     return app, api
 
 
 def initialize_interfaces(app):
-    app.default_store = DataStore()
-    app.naitve_interface = NativeInterface()
+    app.original_data_store = DataStore()
+    app.original_model_interface = ModelInterface()
     app.custom_models = CustomModels()
-    app.dbw = DatabaseWrapper()
     config = Config()
     app.config_obj = config
 
