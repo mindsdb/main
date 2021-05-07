@@ -19,6 +19,8 @@ from mindsdb.interfaces.database.database import DatabaseWrapper
 from mindsdb.utilities.config import Config
 from mindsdb.interfaces.storage.fs import FsSotre
 from mindsdb.utilities.log import log
+import pyarrow as pa
+import pyarrow.flight as fl
 
 
 class ModelController():
@@ -29,11 +31,6 @@ class ModelController():
         self.dbw = DatabaseWrapper()
         self.predictor_cache = {}
         self.ray_based = ray_based
-
-    def _pack(self, obj):
-            if self.ray_based:
-                return obj
-            return xmlrpc.client.Binary(pickle.dumps(obj))
 
     def _invalidate_cached_predictors(self):
         from mindsdb_datasources import FileDS, ClickhouseDS, MariaDS, MySqlDS, PostgresDS, MSSQLDS, MongoDS, SnowflakeDS, AthenaDS
@@ -167,7 +164,9 @@ class ModelController():
         return 0
 
     def predict(self, name, pred_format, when_data=None, kwargs={}):
-        from mindsdb_datasources import FileDS, ClickhouseDS, MariaDS, MySqlDS, PostgresDS, MSSQLDS, MongoDS, SnowflakeDS, AthenaDS
+        from mindsdb_datasources import (FileDS, ClickhouseDS, MariaDS,
+                                         MySqlDS, PostgresDS, MSSQLDS, MongoDS,
+                                         SnowflakeDS, AthenaDS)
         import mindsdb_native
         from mindsdb.interfaces.storage.db import session, Predictor
 
@@ -210,7 +209,8 @@ class ModelController():
             raise Exception(f'Unkown predictions format: {pred_format}')
 
         delete_process_mark('predict')
-        return self._pack(predictions)
+
+        return predictions
 
     def analyse_dataset(self, ds):
         from mindsdb_datasources import FileDS, ClickhouseDS, MariaDS, MySqlDS, PostgresDS, MSSQLDS, MongoDS, SnowflakeDS, AthenaDS
@@ -222,7 +222,7 @@ class ModelController():
         analysis = F.analyse_dataset(ds)
 
         delete_process_mark('analyse')
-        return self._pack(analysis)
+        return analysis
 
     def get_model_data(self, name, db_fix=True):
         from mindsdb_native import F
@@ -258,7 +258,7 @@ class ModelController():
         model['updated_at'] = str(parse_datetime(str(predictor_record.updated_at).split('.')[0]))
         model['predict'] = predictor_record.to_predict
         model['update'] = predictor_record.update_status
-        return self._pack(model)
+        return model
 
     def get_models(self):
         from mindsdb.interfaces.storage.db import session, Predictor
@@ -270,11 +270,7 @@ class ModelController():
         ]
         for model_name in predictor_names:
             try:
-                if self.ray_based:
-                    model_data = self.get_model_data(model_name, db_fix=False)
-                else:
-                    bin = self.get_model_data(model_name, db_fix=False)
-                    model_data = pickle.loads(bin.data)
+                model_data = self.get_model_data(model_name, db_fix=False)
                 reduced_model_data = {}
 
                 for k in ['name', 'version', 'is_active', 'predict', 'status', 'current_phase', 'accuracy', 'data_source', 'update']:
@@ -293,7 +289,7 @@ class ModelController():
                 models.append(reduced_model_data)
             except Exception as e:
                 log.error(f"Can't list data for model: '{model_name}' when calling `get_models(), error: {e}`")
-        return self._pack(models)
+        return models
 
     def delete_model(self, name):
         from mindsdb_native import F
@@ -342,17 +338,34 @@ except Exception as e:
 def ping(): return True
 
 
+class FlightServer(fl.FlightServerBase):
+    def __init__(self, location="grpc://localhost:19329", **kwargs):
+        super(FlightServer, self).__init__(location, **kwargs)
+
+        self.controller = ModelController(False)
+
+        self.actions = {
+            'create': self.controller.create,
+            'learn': self.controller.learn,
+            'predict': self.controller.predict,
+            'analyse_dataset': self.controller.analyse_dataset,
+            'get_model_data': self.controller.get_model_data,
+            'get_models': self.controller.get_models,
+            'delete_model': self.controller.delete_model,
+            'ping': ping,
+        }
+
+    def do_action(self, context, action):
+        if action.type not in self.actions:
+            raise ValueError('Unknown action')
+        else:
+            kwargs = pickle.loads(action.body)
+            obj = self.actions[action.type](**kwargs)
+            buf = pa.py_buffer(pickle.dumps(obj))
+            res = pa.flight.Result(buf)
+            yield res
+
+
 def start():
-    controller = ModelController(False)
-    server = SimpleXMLRPCServer(("localhost", 19329))
-
-    server.register_function(controller.create, "create")
-    server.register_function(controller.learn, "learn")
-    server.register_function(controller.predict, "predict")
-    server.register_function(controller.analyse_dataset, "analyse_dataset")
-    server.register_function(controller.get_model_data, "get_model_data")
-    server.register_function(controller.get_models, "get_models")
-    server.register_function(controller.delete_model, "delete_model")
-    server.register_function(ping, "ping")
-
-    server.serve_forever()
+    server = FlightServer("grpc://localhost:19329")
+    server.serve()
